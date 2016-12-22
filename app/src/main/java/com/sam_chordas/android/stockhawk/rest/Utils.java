@@ -1,0 +1,120 @@
+package com.sam_chordas.android.stockhawk.rest;
+
+import android.annotation.SuppressLint;
+import android.content.ContentProviderOperation;
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
+import android.support.annotation.Nullable;
+import android.text.TextUtils;
+import android.util.Log;
+
+import com.sam_chordas.android.stockhawk.data.QuoteColumns;
+import com.sam_chordas.android.stockhawk.data.QuoteProvider;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+
+
+public class Utils {
+
+    private static String LOG_TAG = Utils.class.getSimpleName();
+
+    public static boolean showPercent = true;
+
+    public static final String NULL_STRING = "null";
+
+    public static boolean isValidString(String s) {
+        return !TextUtils.isEmpty(s) && !NULL_STRING.equals(s);
+    }
+
+    public static ArrayList<ContentProviderOperation> quoteJsonToContentVals(String JSON) {
+        ArrayList<ContentProviderOperation> batchOperations = new ArrayList<>();
+        JSONObject jsonObject;
+        JSONArray resultsArray;
+        try {
+            jsonObject = new JSONObject(JSON);
+            if (jsonObject.length() != 0) {
+                jsonObject = jsonObject.getJSONObject("query");
+                int count = Integer.parseInt(jsonObject.getString("count"));
+                if (count == 1) {
+                    jsonObject = jsonObject.getJSONObject("results")
+                            .getJSONObject("quote");
+                    batchOperations.add(buildBatchOperation(jsonObject));
+                } else {
+                    resultsArray = jsonObject.getJSONObject("results").getJSONArray("quote");
+
+                    if (resultsArray != null && resultsArray.length() != 0) {
+                        for (int i = 0; i < resultsArray.length(); i++) {
+                            jsonObject = resultsArray.getJSONObject(i);
+                            batchOperations.add(buildBatchOperation(jsonObject));
+                        }
+                    }
+                }
+            }
+        } catch (JSONException e) {
+            Log.e(LOG_TAG, "String to JSON failed: " + e);
+        }
+        return batchOperations;
+    }
+
+    @SuppressLint("DefaultLocale")
+    @Nullable
+    public static String truncateBidPrice(String bidPrice) {
+        if (isValidString(bidPrice)) {
+            return String.format("%.2f", Float.parseFloat(bidPrice));
+        }
+        return bidPrice;
+    }
+
+    @SuppressLint("DefaultLocale")
+    public static String truncateChange(String change, boolean isPercentChange) {
+        if (isValidString(change)) {
+            String weight = change.substring(0, 1);
+            String ampersand = "";
+            if (isPercentChange) {
+                ampersand = change.substring(change.length() - 1, change.length());
+                change = change.substring(0, change.length() - 1);
+            }
+            change = change.substring(1, change.length());
+            double round = (double) Math.round(Double.parseDouble(change) * 100) / 100;
+            change = String.format("%.2f", round);
+            StringBuilder changeBuffer = new StringBuilder(change);
+            changeBuffer.insert(0, weight);
+            changeBuffer.append(ampersand);
+            change = changeBuffer.toString();
+            return change;
+        } else {
+            return change;
+        }
+    }
+
+    public static ContentProviderOperation buildBatchOperation(JSONObject jsonObject) {
+        ContentProviderOperation.Builder builder = ContentProviderOperation.newInsert(
+                QuoteProvider.Quotes.CONTENT_URI);
+        String change = jsonObject.optString("Change");
+        builder.withValue(QuoteColumns.SYMBOL, jsonObject.optString("symbol"));
+        builder.withValue(QuoteColumns.BIDPRICE, truncateBidPrice(jsonObject.optString("Bid")));
+        builder.withValue(QuoteColumns.PERCENT_CHANGE, truncateChange(
+                jsonObject.optString("ChangeinPercent"), true));
+        builder.withValue(QuoteColumns.CHANGE, truncateChange(change, false));
+        builder.withValue(QuoteColumns.ISCURRENT, 1);
+        if (change.charAt(0) == '-') {
+            builder.withValue(QuoteColumns.ISUP, 0);
+        } else {
+            builder.withValue(QuoteColumns.ISUP, 1);
+        }
+        return builder.build();
+    }
+
+    public static boolean isNetworkAvailable(Context context) {
+        ConnectivityManager cm =
+                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+
+        NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
+        return activeNetwork != null && activeNetwork.isConnectedOrConnecting();
+    }
+}
